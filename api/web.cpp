@@ -1,0 +1,168 @@
+#include "web.h"
+#include "mongoose.h"
+#include <math.h>
+#include "cJSON.h"
+#include "klippy.h"
+#include "params.h"
+#include "hl_boot.h"
+
+#define LOG_TAG "web"
+#undef LOG_LEVEL
+#define LOG_LEVEL LOG_INFO
+#include "log.h"
+
+static struct mg_mgr web_mgr;
+struct {
+    int count;
+    sdcp_handler_entry_t table[SDCP_MAX_HANDLERS];
+} sdcp_handlers;
+
+// hl_get_chipid(client_id, len); hl_boot.h - that's MainboardID
+// machine_info from params.h
+
+static cJSON* sdcp_create_base_response(const int cmd, mg_ws_message* mg) {
+    cJSON *root = cJSON_CreateObject();
+    cJSON *root_data, *data_data;
+
+    cJSON_AddStringToObject(root, "Id", SDCP_MACHINE_BRAND_IDENTIFIER);
+    cJSON_AddItemToObject(root, "Data", root_data = cJSON_CreateObject());
+    cJSON_AddNumberToObject(root_data, "Cmd", cmd);
+    cJSON_AddItemToObject(root_data, "Data", data_data = cJSON_CreateObject());
+    cJSON_AddStringToObject(root_data, "MainboardID", "MainboardID"); // TODO: replace
+    cJSON_AddNumberToObject(root_data, "Timestamp", time(NULL));
+    cJSON_AddStringToObject(root, "Topic", "sdcp/response/MainboardID"); // TODO: replace
+
+    char* request_id = mg_json_get_str(mg->data, "$.Data.RequestID");
+    if (request_id) {
+        cJSON_AddStringToObject(root_data, "RequestID", request_id);
+        free(request_id);
+    }
+
+    return root;
+}
+
+static void sdcp_send_response(struct mg_connection* c, cJSON* root) {
+    char *result = cJSON_Print(root);
+    cJSON_Delete(root);
+    mg_ws_send(c, result, strlen(result), WEBSOCKET_OP_TEXT);
+    free(result);
+}
+
+static void sdcp_refresh_status_handler(struct mg_connection* c, int cmd, mg_ws_message* mg, void* user_data) {
+    cJSON *root = sdcp_create_base_response(cmd, mg);
+    cJSON *root_data = cJSON_GetObjectItem(root, "Data");
+    cJSON *data_data = cJSON_GetObjectItem(root_data, "Data");
+
+    cJSON_AddNumberToObject(data_data, "Ack", 0);
+    // TODO: This should send separate status message
+
+    sdcp_send_response(c, root);
+}
+
+static void sdcp_attributes_handler(struct mg_connection* c, const int cmd, mg_ws_message* mg, void *user_data) {
+    cJSON *root = sdcp_create_base_response(cmd, mg);
+    cJSON *root_data = cJSON_GetObjectItem(root, "Data");
+    cJSON *data_data = cJSON_GetObjectItem(root_data, "Data");
+
+    cJSON_AddNumberToObject(data_data, "Ack", 0);
+    // TODO: This should send separate attributte message
+
+    sdcp_send_response(c, root);
+}
+
+void sdcp_register_handler(const int cmd, const sdcp_event_handler handler) {
+    int i = 0;
+    // Replace handler if already exists
+    for (i = 0; i < sdcp_handlers.count; i++) {
+        if (sdcp_handlers.table[i].cmd == cmd) {
+            return;
+        }
+    }
+    if (i < SDCP_MAX_HANDLERS) {
+        LOG_I("Registering SDCP handler");
+        sdcp_handlers.table[i].cmd = cmd;
+        sdcp_handlers.table[i].handler = handler;
+        sdcp_handlers.count++;
+    } else {
+        LOG_E("SDCP_MAX_HANDLERS exceeded, can't register more\n");
+    }
+}
+
+static void handle_sdcp_command(struct mg_connection* c, const int cmd, mg_ws_message* mg, void *user_data) {
+    for (int i = 0; i < sdcp_handlers.count; i++) {
+        if (sdcp_handlers.table[i].cmd == cmd) {
+            sdcp_handlers.table[i].handler(c, cmd, mg, user_data);
+            return;
+        }
+    }
+    LOG_I("SDCP handler not found\n");
+    mg_ws_send(c, "{}", 2, WEBSOCKET_OP_TEXT);
+}
+
+
+static void handle_web_request(struct mg_connection *c, const int ev, void *ev_data, void *user_data) {
+    if (ev == MG_EV_HTTP_MSG && c->pfn != NULL) {
+        struct mg_http_serve_opts opts = {.root_dir = WEBSERVER_SERVE_DIR
+        };
+        mg_http_serve_dir(c, (mg_http_message *) ev_data, &opts);
+    }
+}
+
+static void handle_ws_request(struct mg_connection *c, const int ev, void *ev_data, void *user_data) {
+    if (ev == MG_EV_HTTP_MSG) {
+        struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+        if (mg_match(hm->uri, mg_str("/websocket"), NULL)) {
+            mg_ws_upgrade(c, hm, NULL);
+            c->data[0] = 'W'; // mark as websocket for later broadcasts
+        } else {
+            mg_http_reply(c, 404, "Content-Type: text/plain", "Not found\n");
+        }
+    } else if (ev == MG_EV_WS_MSG) {
+        struct mg_ws_message *wm = (struct mg_ws_message *) ev_data;
+        if (wm->data.ptr && wm->data.len == 4 && strcmp(wm->data.ptr, "ping") == 0) {
+            mg_ws_send(c, "pong", 4, WEBSOCKET_OP_TEXT);
+        } else if (wm->data.ptr && wm->data.len > 0 && *wm->data.ptr == '{') {
+            double cmd_double;
+            if (mg_json_get_num(wm->data, "$.Data.Cmd", &cmd_double)) {
+                const int cmd_int = (int) lround(cmd_double); // JSON loves floats, yay.
+                handle_sdcp_command(c, cmd_int, wm, user_data);
+            } else {
+                LOG_I("Didn't get valid $.Data.Cmd in JSON msg\n");
+            }
+        } else {
+            LOG_I("Unknown message type received on websocket\n");
+            //mg_close_conn(c);
+        }
+    }
+}
+
+void webserver_start() {
+    LOG_I("Starting webserver\n");
+    char web_listen[30];
+    char websocket_listen[30];
+
+    sprintf(web_listen, "http://0.0.0.0:%d", WEBSERVER_PORT);
+    sprintf(websocket_listen, "http://0.0.0.0:%d", WEBSOCKET_PORT);
+
+    sdcp_register_handler(SDCP_CMD_REFRESH_STATUS, sdcp_refresh_status_handler);
+    sdcp_register_handler(SDCP_CMD_ATTRIBUTES, sdcp_attributes_handler);
+
+    mg_log_set(MG_LL_INFO);
+    mg_mgr_init(&web_mgr);
+    mg_http_listen(&web_mgr, web_listen, handle_web_request, NULL);
+    mg_http_listen(&web_mgr, websocket_listen, handle_ws_request, NULL);
+}
+
+void webserver_stop() {
+    mg_mgr_free(&web_mgr);
+}
+
+inline void poll_webserver(const int ms) {
+    mg_mgr_poll(&web_mgr, ms);
+}
+
+void* webserver_task(void* arg) {
+    for (;;) poll_webserver(1000);
+}
+
+

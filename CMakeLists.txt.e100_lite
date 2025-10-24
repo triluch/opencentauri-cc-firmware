@@ -2,8 +2,8 @@ project(app)
 cmake_minimum_required(VERSION 3.5)
 
 option(ENABLE_MANUTEST "Enable compilation of manufacturing test" OFF)
-set(CMAKE_C_COMPILER "arm-openwrt-linux-gcc")
-set(CMAKE_CXX_COMPILER "arm-openwrt-linux-g++")
+set(CMAKE_C_COMPILER "$ENV{TOOLCHAIN_PATH}arm-openwrt-linux-gcc")
+set(CMAKE_CXX_COMPILER "$ENV{TOOLCHAIN_PATH}arm-openwrt-linux-g++")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -pthread -lrt -Wno-psabi")

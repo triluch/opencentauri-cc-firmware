@@ -10,6 +10,7 @@ show_help() {
     echo "  -h, --help        Display this help message and exit"
     echo "  -p, --project     name and directory of the project to be built, defualt projcet is e100"
     echo "  -n, --nfs         directory of your nfs server"
+    echo "  -s, --symbols     Keep debug symbols in outpt binary"
     echo
     echo "Examples:"
     echo "  $0"
@@ -17,13 +18,14 @@ show_help() {
 }
 
 
-# the default projcet 
+# the default project
 proj_dir=${proj_dir:-e100}
 nfs_dir=""
+strip_symbols="1"
 
 
 # Parse options
-TEMP=$(getopt -o hp:n: --long help,project:,nfs: -n 'multi_options.sh' -- "$@")
+TEMP=$(getopt -o hsp:n: --long help,symbols,project:,nfs: -n 'multi_options.sh' -- "$@")
 if [ $? != 0 ]; then
     echo "Terminating..." >&2
     exit 1
@@ -44,6 +46,10 @@ while true; do
         -p|--project)
             proj_dir="$2"
             shift 2
+            ;;
+        -s|--symbols)
+            strip_symbols="0"
+            shift
             ;;
         --)
             shift
@@ -79,11 +85,15 @@ ${pwd}/tools/widget/widget -g ${pwd}/resources/${proj_dir}/widget.csv ${pwd}/res
 # Configure cross-compiler toolchain
 . ${pwd}/arm-openwrt-linux-gnueabi-gcc/environment-arm-openwrt-linux-gnueabi || (echo "Need to clone toolchain in .., aborting..." && exit 1)
 
-# Generate jenkins.sh verion file from Git version info, hashes, tags etc.
+# Generate jenkins.h verion file from Git version info, hashes, tags etc.
 ./genjenkins.sh
 
 # Actually build the app
 mkdir ${pwd}/build
 cd ${pwd}/build
 cmake ${pwd}
-make -j19 && arm-openwrt-linux-gnueabi-strip app
+if [ $strip_symbols = "1" ]; then
+  make -j19 && arm-openwrt-linux-gnueabi-strip app
+else
+  make -j19
+fi
