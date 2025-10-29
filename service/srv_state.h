@@ -1,7 +1,7 @@
 #ifndef SRV_STATE_H
 #define SRV_STATE_H
 
-// 由内部模块(Klippy线程)上报至SRV_STATE模块进行汇总和持久化
+// Reported by internal modules (Klippy thread) to the SRV_STATE module for aggregation and persistent storage
 enum
 {
     SRV_HOME_MSG_ID_STATE,
@@ -28,9 +28,9 @@ enum
 
 enum
 {
-    FAN_ID_MODEL = 0,    // 模型风扇
-    FAN_ID_MODEL_HELPER, // 模型辅助风扇
-    FAN_ID_BOX,          // 箱体风扇
+    FAN_ID_MODEL = 0,    // model fan
+    FAN_ID_MODEL_HELPER, // model auxiliary fan
+    FAN_ID_BOX,          // enclosure fan
     FAN_NUMBERS,
 };
 

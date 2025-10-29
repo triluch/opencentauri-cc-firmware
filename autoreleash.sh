@@ -93,7 +93,7 @@ mkdir ${pwd}/build
 cd ${pwd}/build
 cmake ${pwd}
 if [ $strip_symbols = "1" ]; then
-  make -j19 && arm-openwrt-linux-gnueabi-strip app
+  make -j19 && cp app app-debug && arm-openwrt-linux-gnueabi-strip app
 else
   make -j19
 fi

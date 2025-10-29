@@ -97,25 +97,25 @@ extern "C"
     } print_status_r_t;
     typedef struct print_stats_tag
     {
-        char filename[256];     // 打印文件名称
-        char local_task_id[64]; // 本地任务id
-        char taskid[64];        // 远程任务ID
-        uint32_t current_layer; // 当前打印层数
-        uint32_t total_layers;  // 总层数,理论上应该在解析切片参数获取，在切片参数结构体，这里是新增，兼容一下。（11.27）
-        double total_duration;  // 打印总时间
-        double print_duration;  // 当前已打印时间
+        char filename[256];     // Print file name
+        char local_task_id[64]; // Local task ID
+        char taskid[64];        // Remote task ID
+        uint32_t current_layer; // Current printed layer
+        uint32_t total_layers;  // Total number of layers (should be obtained from slice parameters, added here for compatibility)
+        double total_duration;  // Total print time
+        double print_duration;  // Time printed so far
         double filament_used;
         int progress;
         int file_src;
-        double print_start_time;     // 打印开始时间戳,秒
-        double last_pause_time;      // 最后一次暂停时间戳,秒
-        double last_print_time;      // 断电续打用，上一次打印耗时,秒
-        double total_pause_duration; // 总暂停时间
+        double print_start_time;     // Print start timestamp (seconds)
+        double last_pause_time;      // Last pause timestamp (seconds)
+        double last_print_time;      // Last print duration (for power loss recovery, seconds)
+        double total_pause_duration; // Total pause time
         double init_duration;
-        print_stats_state_s state; // 打印子状态
+        print_stats_state_s state; // Print sub-state
         slice_param_t slice_param;
-        print_status_r_t error_status_r; // 打印异常原因
-    } print_stats_t;
+        print_status_r_t error_status_r; // Print error reason
+        } print_stats_t;
 #ifdef __cplusplus
 }
 #endif
