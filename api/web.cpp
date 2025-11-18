@@ -6,13 +6,13 @@
 #include "klippy.h"
 #include "params.h"
 #include "hl_boot.h"
-#include "print_stats_c.h"
 #include "simplebus.h"
 #include "service.h"
 #include "utils.h"
 #include <stdio.h>
 #include "web_upload.h"
 #include "hl_common.h"
+#include "web_helpers.h"
 
 #define LOG_TAG "web"
 #undef LOG_LEVEL
@@ -30,6 +30,8 @@ static char mainboard_id[64] = {};
 static char response_topic[96] = "sdcp/response/";
 cJSON *previous_status = NULL;
 cJSON *current_status = NULL;
+cJSON *next_status = NULL;
+uint64_t last_status_update_time = 0;
 
 // machine_info from params.h
 
@@ -44,102 +46,6 @@ static void srv_state_subscribe_callback(const char *name, void *context, const 
         simple_bus_request("srv_state", SRV_STATE_SRV_ID_STATE, NULL, &srv_state_response);
         pthread_mutex_unlock(&web_srv_state_mutex);
     }
-}
-
-static cJSON *sdcp_build_status() {
-    cJSON *root = cJSON_CreateObject();
-    cJSON *status = cJSON_CreateObject();
-    cJSON_AddItemToObject(root, "Status", status);
-
-    // CurrentStatus
-    {
-        cJSON *arr = cJSON_CreateArray();
-        cJSON_AddItemToArray(arr, cJSON_CreateNumber(0));
-        cJSON_AddItemToObject(status, "CurrentStatus", arr);
-    }
-
-    cJSON_AddNumberToObject(status, "TimeLapseStatus", 0);
-    cJSON_AddNumberToObject(status, "PlatFormType", 0);
-
-    // Temps
-    cJSON_AddNumberToObject(status, "TempOfHotbed",
-                            srv_state_response.state.heater_state[HEATER_ID_BED].current_temperature);
-    cJSON_AddNumberToObject(status, "TempTargetHotbed",
-                            srv_state_response.state.heater_state[HEATER_ID_BED].target_temperature);
-
-    cJSON_AddNumberToObject(status, "TempOfNozzle",
-                            srv_state_response.state.heater_state[HEATER_ID_EXTRUDER].current_temperature);
-    cJSON_AddNumberToObject(status, "TempTargetNozzle",
-                            srv_state_response.state.heater_state[HEATER_ID_EXTRUDER].target_temperature);
-
-    cJSON_AddNumberToObject(status, "TempOfBox",
-                            srv_state_response.state.heater_state[HEATER_ID_BOX].current_temperature);
-    cJSON_AddNumberToObject(status, "TempTargetBox",
-                            srv_state_response.state.heater_state[HEATER_ID_BOX].target_temperature);
-
-    // No, not a typo in the name, it's just "quality" software
-    cJSON_AddStringToObject(status, "CurrenCoord", "0.00,0.00,0.00");
-    // Fan Speeds
-    cJSON *fan_speeds = cJSON_CreateObject();
-    cJSON_AddNumberToObject(fan_speeds, "ModelFan", srv_state_response.state.fan_state[FAN_ID_MODEL].value * 100.);
-    cJSON_AddNumberToObject(fan_speeds, "AuxiliaryFan",
-                            srv_state_response.state.fan_state[FAN_ID_MODEL_HELPER].value * 100.);
-    cJSON_AddNumberToObject(fan_speeds, "BoxFan", srv_state_response.state.fan_state[FAN_ID_BOX].value * 100.);
-    cJSON_AddItemToObject(status, "CurrentFanSpeed", fan_speeds);
-
-    // ZOffset
-    cJSON_AddNumberToObject(status, "ZOffset", 0);
-    // LightStatus
-    cJSON *light_status = cJSON_CreateObject();
-    if (Printer::GetInstance()->m_box_led != nullptr) {
-        cJSON_AddNumberToObject(light_status, "SecondLight", 1);
-    } else {
-        cJSON_AddNumberToObject(light_status, "SecondLight", 0);
-    }
-    cJSON *rgb_light = cJSON_CreateArray();
-    cJSON_AddItemToArray(rgb_light, cJSON_CreateNumber(0));
-    cJSON_AddItemToArray(rgb_light, cJSON_CreateNumber(0));
-    cJSON_AddItemToArray(rgb_light, cJSON_CreateNumber(0));
-    cJSON_AddItemToObject(light_status, "RgbLight", rgb_light);
-    cJSON_AddItemToObject(status, "LightStatus", light_status);
-
-
-    if (Printer::GetInstance()->m_print_stats != nullptr) {
-        print_stats_t print_status = Printer::GetInstance()->m_print_stats->get_status(get_monotonic(), NULL);
-        cJSON *print_info = cJSON_CreateObject();
-        cJSON_AddNumberToObject(print_info, "Status", print_status.state);
-        cJSON_AddNumberToObject(print_info, "CurrentLayer", print_status.current_layer);
-        cJSON_AddNumberToObject(print_info, "TotalLayer", print_status.total_layers);
-        cJSON_AddNumberToObject(print_info, "CurrentTicks", print_status.print_duration);
-        cJSON_AddNumberToObject(print_info, "TotalTicks", print_status.total_duration);
-        cJSON_AddStringToObject(print_info, "Filename", print_status.filename);
-        cJSON_AddNumberToObject(print_info, "ErrorNumber", print_status.error_status_r);
-        cJSON_AddStringToObject(print_info, "TaskId", print_status.taskid);
-        cJSON_AddNumberToObject(print_info, "PrintSpeedPct", 100); // TODO
-        cJSON_AddNumberToObject(print_info, "Progress", print_status.progress);
-        cJSON_AddItemToObject(status, "PrintInfo", print_info);
-    } else {
-        cJSON *print_info = cJSON_CreateObject();
-        cJSON_AddNumberToObject(print_info, "Status", 0);
-        cJSON_AddNumberToObject(print_info, "CurrentLayer", 0);
-        cJSON_AddNumberToObject(print_info, "TotalLayer", 0);
-        cJSON_AddNumberToObject(print_info, "CurrentTicks", 0);
-        cJSON_AddNumberToObject(print_info, "TotalTicks", 0);
-        cJSON_AddStringToObject(print_info, "Filename", "");
-        cJSON_AddNumberToObject(print_info, "ErrorNumber", 0);
-        cJSON_AddStringToObject(print_info, "TaskId", "");
-        cJSON_AddNumberToObject(print_info, "PrintSpeedPct", 100);
-        cJSON_AddNumberToObject(print_info, "Progress", 0);
-        cJSON_AddItemToObject(status, "PrintInfo", print_info);
-    }
-
-    // MainboardID / TimeStamp / Topic
-    cJSON_AddStringToObject(root, "MainboardID", mainboard_id);
-    cJSON_AddNumberToObject(root, "TimeStamp", (double) time(NULL));
-    char topic[96];
-    snprintf(topic, sizeof(topic), "sdcp/status/%s", mainboard_id);
-    cJSON_AddStringToObject(root, "Topic", topic);
-    return root;
 }
 
 
@@ -165,10 +71,22 @@ static cJSON *sdcp_create_base_response(const int cmd, mg_ws_message *mg) {
 }
 
 static void sdcp_send_response(mg_connection *c, cJSON *root) {
-    char *result = cJSON_Print(root);
+    char *result = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     mg_ws_send(c, result, strlen(result), WEBSOCKET_OP_TEXT);
     free(result);
+}
+
+static char* sdcp_get_current_status_str() {
+    cJSON* timestamp_item = cJSON_GetObjectItem(current_status, "TimeStamp");
+    if (timestamp_item) {
+        cJSON_SetNumberValue(timestamp_item, time(NULL));
+    }
+    char *current_status_str = cJSON_PrintUnformatted(current_status);
+    if (timestamp_item) {
+        cJSON_SetNumberValue(timestamp_item, 0);
+    }
+    return current_status_str;
 }
 
 static void sdcp_refresh_status_handler(mg_connection *c, int cmd, mg_ws_message *mg, void *user_data) {
@@ -176,9 +94,9 @@ static void sdcp_refresh_status_handler(mg_connection *c, int cmd, mg_ws_message
     cJSON *root_data = cJSON_GetObjectItem(root, "Data");
     cJSON *data_data = cJSON_GetObjectItem(root_data, "Data");
 
-    cJSON_AddNumberToObject(data_data, "Ack", 0);
-    // TODO: This should send separate status message
-
+    char* str_status = sdcp_get_current_status_str();
+    mg_ws_send(c, str_status, strlen(str_status), WEBSOCKET_OP_TEXT);
+    free(str_status);
     sdcp_send_response(c, root);
 }
 
@@ -223,28 +141,22 @@ static void handle_sdcp_command(struct mg_connection *c, const int cmd, mg_ws_me
 }
 
 static void handle_web_request(struct mg_connection *c, const int ev, void *ev_data, void *user_data) {
-    if (ev == MG_EV_HTTP_MSG && c->pfn != NULL) {
-        const mg_http_message *hm = (mg_http_message *) ev_data;
-        // TODO: Probably shouldn't allow this during print
-        if (mg_http_match_uri(hm, "/uploadFile/upload")) {
+    if (ev == MG_EV_HTTP_MSG) {
+        struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+        if (mg_http_match_uri(hm, "/websocket")) {
+            mg_ws_upgrade(c, hm, NULL);
+            c->data[0] = 'W'; // mark as websocket for later broadcasts
+        } else if (mg_http_match_uri(hm, "/manual-sq")) {
+            mg_ws_upgrade(c, hm, NULL);
+            c->data[0] = 'S'; // mark as manual-sq websocket connection
+        } else if (mg_http_match_uri(hm, "/uploadFile/upload")) {
+            // TODO: Probably shouldn't allow this during print
             web_handle_upload(c, hm);
         } else {
             constexpr mg_http_serve_opts opts = {.root_dir = WEBSERVER_SERVE_DIR};
             mg_http_serve_dir(c, (mg_http_message *) ev_data, &opts);
         }
-    }
-}
-
-static void handle_ws_request(struct mg_connection *c, const int ev, void *ev_data, void *user_data) {
-    if (ev == MG_EV_HTTP_MSG) {
-        struct mg_http_message *hm = (struct mg_http_message *) ev_data;
-        if (mg_match(hm->uri, mg_str("/websocket"), NULL)) {
-            mg_ws_upgrade(c, hm, NULL);
-            c->data[0] = 'W'; // mark as websocket for later broadcasts
-        } else {
-            mg_http_reply(c, 404, "Content-Type: text/plain", "Not found\n");
-        }
-    } else if (ev == MG_EV_WS_MSG) {
+    } else if (ev == MG_EV_WS_MSG && c->data[0] == 'W') {
         struct mg_ws_message *wm = (struct mg_ws_message *) ev_data;
         if (wm->data.ptr && wm->data.len == 4 && strcmp(wm->data.ptr, "ping") == 0) {
             mg_ws_send(c, "pong", 4, WEBSOCKET_OP_TEXT);
@@ -260,7 +172,52 @@ static void handle_ws_request(struct mg_connection *c, const int ev, void *ev_da
             LOG_I("Unknown message type received on websocket\n");
             //mg_close_conn(c);
         }
+    } else if (ev == MG_EV_WS_MSG && c->data[0] == 'S') {
+        struct mg_ws_message *wm = (struct mg_ws_message *) ev_data;
+        if (wm->data.ptr && wm->data.len > 0) {
+            std::string manual_control_cmd(wm->data.ptr, wm->data.len);
+            manual_control_sq.push(manual_control_cmd);
+            Printer::GetInstance()->manual_control_signal();
+            mg_ws_send(c, "ACK\n", 4, WEBSOCKET_OP_TEXT);
+            LOG_I("Received manual control command via websocket: %s\n", manual_control_cmd.c_str());
+        }
     }
+}
+
+static void sdcp_regenerate_status() {
+    const uint64_t now = mg_millis();
+    if (now - last_status_update_time < SDCP_STATUS_UPDATE_INTERVAL_MS) {
+        return;
+    }
+    next_status = sdcp_build_status(srv_state_response, mainboard_id);
+    if (!current_status) {
+        current_status = next_status;
+    }
+    if (previous_status) {
+        previous_status = next_status;
+    }
+    char *next_status_str = cJSON_PrintUnformatted(next_status);
+    char *current_status_str = cJSON_PrintUnformatted(current_status);
+    // When status is different from previous one
+    if (strcmp(next_status_str, current_status_str) != 0) {
+        current_status = next_status;
+        // Just in case it points to the same object (which it will on 1st pass) we only delete previous_stats if it's
+        // different address from current_stats
+        if (current_status != previous_status) {
+            cJSON_Delete(previous_status);
+        }
+        char *ts_current_status_str = sdcp_get_current_status_str();
+        const int ts_current_status_len = strlen(ts_current_status_str);
+        // Broadcast to all websocket connections
+        for (struct mg_connection *c = web_mgr.conns; c != NULL; c = c->next) {
+            if (c->data[0] == 'W') {
+                mg_ws_send(c, ts_current_status_str, ts_current_status_len, WEBSOCKET_OP_TEXT);
+            }
+        }
+        free(ts_current_status_str);
+    }
+    free(next_status_str);
+    free(current_status_str);
 }
 
 void webserver_start() {
@@ -271,10 +228,9 @@ void webserver_start() {
     hl_get_chipid(mainboard_id, sizeof(mainboard_id));
     strcat(response_topic, mainboard_id);
 
-    srv_state_subscribe_callback("srv_state", NULL, SRV_STATE_MSG_ID_STATE, NULL, 0);
     simple_bus_subscribe("srv_state", NULL, srv_state_subscribe_callback);
+    srv_state_subscribe_callback("srv_state", NULL, SRV_STATE_MSG_ID_STATE, NULL, 0);
 
-    // TODO: better cleanup method
     utils_vfork_system("rm /user-resource/.upload-*.tmp");
 
     sprintf(web_listen, "http://0.0.0.0:%d", WEBSERVER_PORT);
@@ -285,8 +241,9 @@ void webserver_start() {
 
     mg_log_set(MG_LL_INFO);
     mg_mgr_init(&web_mgr);
+    sdcp_regenerate_status();
     mg_http_listen(&web_mgr, web_listen, handle_web_request, NULL);
-    mg_http_listen(&web_mgr, websocket_listen, handle_ws_request, NULL);
+    mg_http_listen(&web_mgr, websocket_listen, handle_web_request, NULL);
 }
 
 void webserver_stop() {
@@ -298,5 +255,8 @@ inline void poll_webserver(const int ms) {
 }
 
 void *webserver_task(void *arg) {
-    for (;;) poll_webserver(1000);
+    for (;;) {
+        poll_webserver(WEBSERVER_POLL_TIMER_MS);
+        sdcp_regenerate_status();
+    }
 }

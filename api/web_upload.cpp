@@ -76,7 +76,7 @@ static void process_upload_info(struct mg_connection *c, const mg_http_message *
             for (int i = 0; i < part.body.len; i++) {
                 if (!isxdigit(upload_info_p->uuid[i]) && upload_info_p->uuid[i] != '-') {
                     LOG_E("Invalid character in UUID\n");
-                    upload_return_error(c, 400, -2, "Invalid UUID format", "uuid");
+                    upload_return_error(c, 400, UPLOAD_ERROR_UNKNOWN, "Invalid UUID format", "uuid");
                     return;
                 }
             }
@@ -86,12 +86,12 @@ static void process_upload_info(struct mg_connection *c, const mg_http_message *
         if (strcmp(name_buf, "File") == 0) {
             if (part.filename.len > MAX_UPLOAD_FILENAME_LEN) {
                 LOG_E("Uploaded filename too long\n");
-                upload_return_error(c, 400, -3, "Filename too long", "filename");
+                upload_return_error(c, 400, UPLOAD_ERROR_UNKNOWN, "Filename too long", "filename");
                 return;
             }
             if (part.filename.len < 1) {
                 LOG_E("Uploaded filename empty\n");
-                upload_return_error(c, 400, -4, "Filename cannot be empty", "filename");
+                upload_return_error(c, 400, UPLOAD_ERROR_UNKNOWN, "Filename cannot be empty", "filename");
                 return;
             }
             memcpy(upload_info_p->filename, part.filename.ptr, part.filename.len);
@@ -101,14 +101,14 @@ static void process_upload_info(struct mg_connection *c, const mg_http_message *
             FILE *fp = fopen(upload_info_p->temp_file_path, "wb");
             if (fp == NULL) {
                 LOG_E("Failed to open temporary file for writing\n");
-                upload_return_error(c, 500, -3, "Internal server error", "file");
+                upload_return_error(c, 500, UPLOAD_ERROR_FILE_OPEN, "Internal server error", "file");
                 return;
             }
             size_t written = fwrite(part.body.ptr, 1, part.body.len, fp);
             fclose(fp);
             if (written != part.body.len) {
                 LOG_E("Failed to write complete file chunk to temporary file\n");
-                upload_return_error(c, 500, -3, "Internal server error", "file");
+                upload_return_error(c, 500, UPLOAD_ERROR_UNKNOWN, "Internal server error", "file");
                 return;
             }
             upload_info_fs->file = true;
@@ -134,7 +134,7 @@ static void process_upload_chunk(struct mg_connection *c, upload_info_t upload_i
             LOG_E("Failed to rename temporary upload file to final temp file: %s\n", strerror(errno));
             unlink(upload_info.temp_file_path);
             unlink(final_temp_file_path);
-            upload_return_error(c, 500, -3, "Internal server error", "file");
+            upload_return_error(c, 500, UPLOAD_ERROR_FILE_OPEN, "Internal server error", "file");
             return;
         }
     } else {
@@ -145,7 +145,7 @@ static void process_upload_chunk(struct mg_connection *c, upload_info_t upload_i
         if (fp == NULL) {
             LOG_E("Failed to open existing upload file for appending\n");
             unlink(upload_info.temp_file_path);
-            upload_return_error(c, 400, -5, "No existing upload found", "file");
+            upload_return_error(c, 400, UPLOAD_ERROR_FILE_OPEN, "No existing upload found", "file");
             return;
         }
         fseek(fp, 0, SEEK_END);
@@ -155,7 +155,7 @@ static void process_upload_chunk(struct mg_connection *c, upload_info_t upload_i
                   upload_info.offset);
             fclose(fp);
             unlink(upload_info.temp_file_path);
-            upload_return_error(c, 400, -6, "Offset mismatch", "offset");
+            upload_return_error(c, 400, UPLOAD_ERROR_OFFSET_MISMATCH, "Offset mismatch", "offset");
             return;
         }
         // read from temp part file and append to final temp file
@@ -164,7 +164,7 @@ static void process_upload_chunk(struct mg_connection *c, upload_info_t upload_i
             LOG_E("Failed to open temporary part file for reading\n");
             fclose(fp);
             unlink(upload_info.temp_file_path);
-            upload_return_error(c, 500, -3, "Internal server error", "file");
+            upload_return_error(c, 500, UPLOAD_ERROR_FILE_OPEN, "Internal server error", "file");
             return;
         }
         fseek(part_fp, 0, SEEK_END);
@@ -179,7 +179,7 @@ static void process_upload_chunk(struct mg_connection *c, upload_info_t upload_i
         if (written != part_size) {
             LOG_E("Failed to append complete file chunk to existing upload file\n");
             unlink(upload_info.temp_file_path);
-            upload_return_error(c, 500, -3, "Internal server error", "file");
+            upload_return_error(c, 500, UPLOAD_ERROR_UNKNOWN, "Internal server error", "file");
             return;
         }
         unlink(upload_info.temp_file_path);
@@ -191,7 +191,7 @@ static void process_upload_chunk(struct mg_connection *c, upload_info_t upload_i
     if (fp == NULL) {
         LOG_E("Failed to open existing upload file for size check\n");
         unlink(final_temp_file_path);
-        upload_return_error(c, 500, -3, "Internal server error", "file");
+        upload_return_error(c, 500, UPLOAD_ERROR_FILE_OPEN, "Internal server error", "file");
         return;
     }
     fseek(fp, 0, SEEK_END);
@@ -217,7 +217,7 @@ static void process_upload_chunk(struct mg_connection *c, upload_info_t upload_i
         if (rename(final_temp_file_path, final_file_path) != 0) {
             LOG_E("Failed to move uploaded file to final location: %s\n", strerror(errno));
             unlink(final_temp_file_path);
-            upload_return_error(c, 500, -3, "Internal server error", "file");
+            upload_return_error(c, 500, UPLOAD_ERROR_FILE_OPEN, "Internal server error", "file");
             return;
         }
         if (FileManager::GetInstance()->AddFile(final_file_path) == 0) {
@@ -252,6 +252,6 @@ void web_handle_upload(struct mg_connection *c, const mg_http_message *hm) {
         if (strlen(upload_info.temp_file_path) > 0) {
             unlink(upload_info.temp_file_path);
         }
-        upload_return_error(c, 400, -2, "Missing required upload fields", "filename");
+        upload_return_error(c, 400, UPLOAD_ERROR_UNKNOWN, "Missing required upload fields", "filename");
     }
 }

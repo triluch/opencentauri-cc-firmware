@@ -27,4 +27,12 @@ typedef struct {
     bool file;
 } upload_info_fieldset_t;
 
+enum {
+    // Error codes are dfined by Elegoo documentation (SDCPv3.0.0), we are doing best to match to our errors.
+    UPLOAD_ERROR_OFFSET = -1, // offset error 	Illegal file offset value (less than 0)
+    UPLOAD_ERROR_OFFSET_MISMATCH = -2, // offset not match 	File offset does not match the current file
+    UPLOAD_ERROR_FILE_OPEN = -3, // file open failed 	File cannot be opened
+    UPLOAD_ERROR_UNKNOWN = -4, // unknow error 	Other Unknown Errors
+} upload_error_t;
+
 void web_handle_upload(struct mg_connection *c, const mg_http_message *hm);

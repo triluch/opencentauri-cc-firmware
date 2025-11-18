@@ -1,6 +1,8 @@
 #ifndef WEB_H
 #define WEB_H
 #include "mongoose.h"
+#include <string>
+#include "safe_queue.h"
 
 #endif //WEB_H
 
@@ -11,7 +13,14 @@
 // Looking at various logs it seems to be the same for every CC, couldn't find how it is generated.
 #define SDCP_MACHINE_BRAND_IDENTIFIER "979d4C788A4a78bC777A870F1A02867A"
 #define SDCP_MAX_HANDLERS 20
+#define SDCP_STATUS_UPDATE_INTERVAL_MS 500
+#define WEBSERVER_POLL_TIMER_MS 100
 
+// There doesn't seem to be any other indicator of light being on/off, just this bool in app_setting.cpp.
+// And yes, it is missplleed.
+extern bool illumination_light_swtich;
+
+extern SafeQueue<std::string> manual_control_sq;
 
 typedef enum {
     SDCP_CMD_REFRESH_STATUS = 0,
